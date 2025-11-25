@@ -122,11 +122,21 @@ class CalendarService:
         if not calendar_id:
             return []
         
-        events_result = self.service.events().list(
-            calendarId=calendar_id,
-            maxResults=max_results,
-            singleEvents=True,
-            orderBy='startTime'
-        ).execute()
+        from datetime import datetime
         
-        return events_result.get('items', [])
+        try:
+            # Get upcoming events (from now onwards)
+            now = datetime.utcnow().isoformat() + 'Z'
+            
+            events_result = self.service.events().list(
+                calendarId=calendar_id,
+                timeMin=now,
+                maxResults=max_results,
+                singleEvents=True,
+                orderBy='startTime'
+            ).execute()
+            
+            return events_result.get('items', [])
+        except Exception as e:
+            print(f"Error listing events: {e}")
+            return []

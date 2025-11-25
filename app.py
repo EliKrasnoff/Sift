@@ -539,6 +539,8 @@ def index():
                         eventSource.close();
                     }
                     
+                    eventSource = new EventSource('/sync-progress');
+
                     eventSource.onmessage = function(event) {
                         const data = JSON.parse(event.data);
                         
@@ -594,28 +596,82 @@ def index():
                     fetch('/sync-result')
                         .then(response => response.json())
                         .then(data => {
+                            // Build summary section
                             let message = `
-                                <strong style="font-size: 18px;">✅ Sync Complete!</strong><br><br>
-                                <div style="line-height: 2;">
-                                📧 <strong>Emails scanned:</strong> ${data.emails_scanned}<br>
-                                📝 <strong>Emails processed:</strong> ${data.emails_processed}<br>
-                                🎉 <strong>Events extracted:</strong> ${data.events_extracted}<br>
-                                📅 <strong>Events added:</strong> ${data.events_added}
+                                <div style="text-align: center; margin-bottom: 24px;">
+                                    <strong style="font-size: 24px;">✅ Sync Complete!</strong>
+                                </div>
+                                
+                                <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; margin-bottom: 24px;">
+                                    <div style="background: #f7fafc; padding: 16px; border-radius: 8px; text-align: center;">
+                                        <div style="font-size: 32px; font-weight: 700; color: #667eea;">${data.emails_scanned}</div>
+                                        <div style="font-size: 13px; color: #718096; margin-top: 4px;">Emails Scanned</div>
+                                    </div>
+                                    <div style="background: #f7fafc; padding: 16px; border-radius: 8px; text-align: center;">
+                                        <div style="font-size: 32px; font-weight: 700; color: #667eea;">${data.emails_processed}</div>
+                                        <div style="font-size: 13px; color: #718096; margin-top: 4px;">Emails Processed</div>
+                                    </div>
+                                    <div style="background: #f7fafc; padding: 16px; border-radius: 8px; text-align: center;">
+                                        <div style="font-size: 32px; font-weight: 700; color: #48bb78;">${data.events_extracted}</div>
+                                        <div style="font-size: 13px; color: #718096; margin-top: 4px;">Events Extracted</div>
+                                    </div>
+                                    <div style="background: #f7fafc; padding: 16px; border-radius: 8px; text-align: center;">
+                                        <div style="font-size: 32px; font-weight: 700; color: #48bb78;">${data.events_added}</div>
+                                        <div style="font-size: 13px; color: #718096; margin-top: 4px;">Events Added</div>
+                                    </div>
+                                </div>
                             `;
                             
+                            // Add additional info
                             if (data.duplicates_skipped > 0) {
-                                message += `<br>⏭️ <strong>Duplicates skipped:</strong> ${data.duplicates_skipped}`;
+                                message += `
+                                    <div style="background: #fef5e7; border-left: 4px solid #f39c12; padding: 12px; border-radius: 4px; margin-bottom: 16px;">
+                                        ⏭️ <strong>${data.duplicates_skipped}</strong> duplicate events skipped
+                                    </div>
+                                `;
                             }
                             
                             if (data.errors && data.errors.length > 0) {
-                                message += `<br><br>⚠️ ${data.errors.length} error(s) occurred`;
+                                message += `
+                                    <div style="background: #fadbd8; border-left: 4px solid #e74c3c; padding: 12px; border-radius: 4px; margin-bottom: 16px;">
+                                        ⚠️ <strong>${data.errors.length}</strong> error(s) occurred during sync
+                                    </div>
+                                `;
                             }
                             
+                            // Cost breakdown
                             if (data.costs) {
-                                message += `<br><br>💰 <strong>Cost:</strong> $${data.costs.total_cost.toFixed(4)}`;
+                                message += `
+                                    <div style="background: #f7fafc; border: 2px solid #e2e8f0; border-radius: 8px; padding: 16px; margin-top: 16px;">
+                                        <div style="font-size: 16px; font-weight: 600; color: #2d3748; margin-bottom: 12px;">
+                                            💰 Cost Breakdown
+                                        </div>
+                                        <div style="display: grid; gap: 8px; font-size: 14px;">
+                                            <div style="display: flex; justify-content: space-between;">
+                                                <span style="color: #718096;">OpenAI Input Tokens:</span>
+                                                <span style="font-weight: 600; color: #4a5568;">${data.costs.openai_input_tokens.toLocaleString()}</span>
+                                            </div>
+                                            <div style="display: flex; justify-content: space-between;">
+                                                <span style="color: #718096;">OpenAI Output Tokens:</span>
+                                                <span style="font-weight: 600; color: #4a5568;">${data.costs.openai_output_tokens.toLocaleString()}</span>
+                                            </div>
+                                            <div style="display: flex; justify-content: space-between;">
+                                                <span style="color: #718096;">Gmail API Calls:</span>
+                                                <span style="font-weight: 600; color: #4a5568;">${data.costs.gmail_api_calls}</span>
+                                            </div>
+                                            <div style="display: flex; justify-content: space-between;">
+                                                <span style="color: #718096;">Calendar API Calls:</span>
+                                                <span style="font-weight: 600; color: #4a5568;">${data.costs.calendar_api_calls}</span>
+                                            </div>
+                                            <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 8px 0;">
+                                            <div style="display: flex; justify-content: space-between;">
+                                                <span style="color: #2d3748; font-weight: 600;">Total Cost:</span>
+                                                <span style="font-weight: 700; color: #667eea; font-size: 16px;">$${data.costs.total_cost.toFixed(4)}</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                `;
                             }
-                            
-                            message += '</div>';
                             
                             showStatus(message, 'success');
                         })
@@ -880,23 +936,40 @@ def sync_progress():
     def generate():
         import time
         last_stage = None
+        last_message = None
         
         while True:
             status = progress_tracker.get_status()
             
-            # Only send if status changed
-            if status['stage'] != last_stage or status['stage'] in ['processing', 'extracting', 'adding']:
+            # Send updates for rate_limit stage (always) and other stages (when changed)
+            should_send = False
+            
+            if status['stage'] == 'rate_limit':
+                # Always send rate_limit updates (for countdown)
+                should_send = True
+            elif status['stage'] != last_stage or status['message'] != last_message:
+                # Send when stage or message changes
+                should_send = True
+            elif status['stage'] in ['processing', 'extracting', 'adding']:
+                # Always send for these stages (for progress updates)
+                should_send = True
+            
+            if should_send:
                 yield f"data: {json.dumps(status)}\n\n"
                 last_stage = status['stage']
+                last_message = status['message']
             
             # Stop streaming when done
             if status['stage'] in ['complete', 'error']:
                 break
             
-            time.sleep(0.5)
+            # Shorter sleep for rate_limit stage to show countdown
+            if status['stage'] == 'rate_limit':
+                time.sleep(0.1)  # Check more frequently during rate limit
+            else:
+                time.sleep(0.5)
     
     return Response(generate(), mimetype='text/event-stream')
-
 
 @app.route('/sync')
 def run_sync():

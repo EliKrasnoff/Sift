@@ -96,8 +96,8 @@ class EventExtractor:
                         for countdown in range(retry_delay, 0, -1):
                             progress_callback(
                                 'rate_limit',
-                                retry_delay - countdown,
-                                retry_delay,
+                                retry_delay - countdown + 1,  # Current progress (1, 2, 3...)
+                                retry_delay,                   # Total
                                 f'⏸️ Rate limit reached. Waiting {countdown}s before retry {attempt + 1}/{max_retries}...'
                             )
                             time.sleep(1)
@@ -130,6 +130,10 @@ an email mentions a meeting won't happen because of some other event, do NOT ext
 if an email doesn't include critical information about the event (e.g. no date or time), do NOT make up that information - 
 only extract what is clearly specified or can be reliably inferred. If the email does not contain this information,
 it's likely because the event is not intended for the recipient.
+
+Also VERY critical for events scheduled in an email chain between people: only include events that have been confirmed, 
+NOT proposed times. So, for example, if an emails proposes a few possible dates for a meeting but doesn't confirm one, 
+do NOT extract that as an event. Only extract the event once an event has been confirmed.
 
 Return ONLY valid JSON in this EXACT format (no additional text):
 {{
