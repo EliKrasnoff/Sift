@@ -513,11 +513,14 @@ def index():
                 function showStatus(message, type) {
                     const statusDiv = document.getElementById('status');
                     statusDiv.className = 'status-box ' + type;
+                    statusDiv.style.display = 'block';  // Explicitly show (overrides any inline hide)
                     statusDiv.innerHTML = message;
                 }
                 
                 function hideStatus() {
-                    document.getElementById('status').style.display = 'none';
+                    const statusDiv = document.getElementById('status');
+                    statusDiv.className = 'status-box';  // Remove success/error/loading class
+                    statusDiv.style.display = 'none';
                 }
                 
                 function runSync() {
@@ -596,6 +599,10 @@ def index():
                     fetch('/sync-result')
                         .then(response => response.json())
                         .then(data => {
+                            // DEBUG: Log the data to console
+                            console.log('Sync result data:', data);
+                            console.log('Has costs?', !!data.costs);
+                            
                             // Build summary section
                             let message = `
                                 <div style="text-align: center; margin-bottom: 24px;">
@@ -604,29 +611,37 @@ def index():
                                 
                                 <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; margin-bottom: 24px;">
                                     <div style="background: #f7fafc; padding: 16px; border-radius: 8px; text-align: center;">
-                                        <div style="font-size: 32px; font-weight: 700; color: #667eea;">${data.emails_scanned}</div>
+                                        <div style="font-size: 32px; font-weight: 700; color: #667eea;">${data.emails_scanned || 0}</div>
                                         <div style="font-size: 13px; color: #718096; margin-top: 4px;">Emails Scanned</div>
                                     </div>
                                     <div style="background: #f7fafc; padding: 16px; border-radius: 8px; text-align: center;">
-                                        <div style="font-size: 32px; font-weight: 700; color: #667eea;">${data.emails_processed}</div>
+                                        <div style="font-size: 32px; font-weight: 700; color: #667eea;">${data.emails_processed || 0}</div>
                                         <div style="font-size: 13px; color: #718096; margin-top: 4px;">Emails Processed</div>
                                     </div>
                                     <div style="background: #f7fafc; padding: 16px; border-radius: 8px; text-align: center;">
-                                        <div style="font-size: 32px; font-weight: 700; color: #48bb78;">${data.events_extracted}</div>
+                                        <div style="font-size: 32px; font-weight: 700; color: #48bb78;">${data.events_extracted || 0}</div>
                                         <div style="font-size: 13px; color: #718096; margin-top: 4px;">Events Extracted</div>
                                     </div>
                                     <div style="background: #f7fafc; padding: 16px; border-radius: 8px; text-align: center;">
-                                        <div style="font-size: 32px; font-weight: 700; color: #48bb78;">${data.events_added}</div>
+                                        <div style="font-size: 32px; font-weight: 700; color: #48bb78;">${data.events_added || 0}</div>
                                         <div style="font-size: 13px; color: #718096; margin-top: 4px;">Events Added</div>
                                     </div>
                                 </div>
                             `;
                             
                             // Add additional info
-                            if (data.duplicates_skipped > 0) {
+                            if (data.emails_skipped && data.emails_skipped > 0) {
+                                message += `
+                                    <div style="background: #e9ecef; border-left: 4px solid #6c757d; padding: 12px; border-radius: 4px; margin-bottom: 16px;">
+                                        ⏭️ <strong>${data.emails_skipped}</strong> email(s) already processed (skipped)
+                                    </div>
+                                `;
+                            }
+                            
+                            if (data.duplicates_skipped && data.duplicates_skipped > 0) {
                                 message += `
                                     <div style="background: #fef5e7; border-left: 4px solid #f39c12; padding: 12px; border-radius: 4px; margin-bottom: 16px;">
-                                        ⏭️ <strong>${data.duplicates_skipped}</strong> duplicate events skipped
+                                        ⏭️ <strong>${data.duplicates_skipped}</strong> duplicate event(s) skipped
                                     </div>
                                 `;
                             }
@@ -649,34 +664,37 @@ def index():
                                         <div style="display: grid; gap: 8px; font-size: 14px;">
                                             <div style="display: flex; justify-content: space-between;">
                                                 <span style="color: #718096;">OpenAI Input Tokens:</span>
-                                                <span style="font-weight: 600; color: #4a5568;">${data.costs.openai_input_tokens.toLocaleString()}</span>
+                                                <span style="font-weight: 600; color: #4a5568;">${(data.costs.openai_input_tokens || 0).toLocaleString()}</span>
                                             </div>
                                             <div style="display: flex; justify-content: space-between;">
                                                 <span style="color: #718096;">OpenAI Output Tokens:</span>
-                                                <span style="font-weight: 600; color: #4a5568;">${data.costs.openai_output_tokens.toLocaleString()}</span>
+                                                <span style="font-weight: 600; color: #4a5568;">${(data.costs.openai_output_tokens || 0).toLocaleString()}</span>
                                             </div>
                                             <div style="display: flex; justify-content: space-between;">
                                                 <span style="color: #718096;">Gmail API Calls:</span>
-                                                <span style="font-weight: 600; color: #4a5568;">${data.costs.gmail_api_calls}</span>
+                                                <span style="font-weight: 600; color: #4a5568;">${data.costs.gmail_api_calls || 0}</span>
                                             </div>
                                             <div style="display: flex; justify-content: space-between;">
                                                 <span style="color: #718096;">Calendar API Calls:</span>
-                                                <span style="font-weight: 600; color: #4a5568;">${data.costs.calendar_api_calls}</span>
+                                                <span style="font-weight: 600; color: #4a5568;">${data.costs.calendar_api_calls || 0}</span>
                                             </div>
                                             <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 8px 0;">
                                             <div style="display: flex; justify-content: space-between;">
                                                 <span style="color: #2d3748; font-weight: 600;">Total Cost:</span>
-                                                <span style="font-weight: 700; color: #667eea; font-size: 16px;">$${data.costs.total_cost.toFixed(4)}</span>
+                                                <span style="font-weight: 700; color: #667eea; font-size: 16px;">$${(data.costs.total_cost || 0).toFixed(4)}</span>
                                             </div>
                                         </div>
                                     </div>
                                 `;
+                            } else {
+                                console.warn('No costs data in response!');
                             }
                             
                             showStatus(message, 'success');
                         })
                         .catch(error => {
-                            showStatus('❌ Error fetching results', 'error');
+                            console.error('Error fetching sync results:', error);
+                            showStatus('❌ Error fetching results: ' + error.message, 'error');
                         });
                 }
                 
