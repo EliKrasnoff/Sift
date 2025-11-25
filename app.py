@@ -539,15 +539,25 @@ def index():
                         eventSource.close();
                     }
                     
-                    eventSource = new EventSource('/sync-progress');
-                    
                     eventSource.onmessage = function(event) {
                         const data = JSON.parse(event.data);
                         
                         // Update progress bar
                         progressFill.style.width = data.progress + '%';
                         progressFill.textContent = data.progress + '%';
-                        progressMessage.textContent = data.message;
+                        
+                        // Special styling for rate limit stage
+                        if (data.stage === 'rate_limit') {
+                            progressFill.style.background = 'linear-gradient(90deg, #ed8936 0%, #dd6b20 100%)';
+                            progressMessage.textContent = data.message;
+                            progressMessage.style.color = '#c05621';
+                            progressMessage.style.fontWeight = '600';
+                        } else {
+                            progressFill.style.background = 'linear-gradient(90deg, #667eea 0%, #764ba2 100%)';
+                            progressMessage.textContent = data.message;
+                            progressMessage.style.color = '#4a5568';
+                            progressMessage.style.fontWeight = '500';
+                        }
                         
                         // If complete or error, close and show results
                         if (data.stage === 'complete') {

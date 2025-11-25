@@ -38,9 +38,17 @@ class SyncWorker:
             except:
                 return None
     
-    def run_sync(self, max_emails=None):
-        """Main sync process with cost tracking"""
+    def run_sync(self, max_emails=None, progress_callback=None):
+        """Main sync process with cost tracking and progress reporting"""
+        import time
+        
         print(f"\n=== Starting sync for {self.user.email} ===")
+        
+        # Helper function to report progress
+        def report_progress(stage, current, total, message):
+            if progress_callback:
+                progress_callback(stage, current, total, message)
+            print(f"[{stage}] {message} ({current}/{total})")
         
         # Initialize cost tracker
         cost_tracker = CostTracker(self.user, model='gpt-4o')
@@ -53,28 +61,47 @@ class SyncWorker:
             'duplicates_skipped': 0,
             'large_emails': [],
             'errors': [],
-            'costs': {}  # Will be populated at the end
+            'costs': {}
         }
-    
-        # Track events we've already added (to avoid duplicates across emails)
-        added_events_cache = set()  # Store (title, start_datetime) tuples
+
+        # Track events we've already added
+        added_events_cache = set()
         
         try:
+            # Stage 1: Setup calendar
+            report_progress('setup', 1, 4, 'Initializing calendar...')
             calendar_id = self.calendar_service.create_sift_calendar()
             print(f"Using calendar: {calendar_id}")
+            time.sleep(0.3)
             
-            # Fetch emails
+            # Stage 2: Connect to Gmail
+            report_progress('setup', 2, 4, 'Connecting to Gmail...')
+            time.sleep(0.3)
+            
+            # Stage 3: Fetch emails
+            report_progress('setup', 3, 4, 'Fetching recent emails...')
             emails = self.gmail_service.get_recent_emails(days=1, max_results=25, exclude_categories=True)
 
-            # Safety check
             if emails is None:
                 emails = []
                 
             results['emails_scanned'] = len(emails)
-            print(f"Found {len(emails)} emails to scan")
+            
+            report_progress('setup', 4, 4, f'Found {len(emails)} emails to scan')
+            time.sleep(0.5)
+            
+            if len(emails) == 0:
+                report_progress('complete', 1, 1, 'No new emails to process')
+                return results
             
             # Process each email
-            for email in emails:
+            for email_index, email in enumerate(emails):
+                current_email = email_index + 1
+                
+                # Update progress: Processing email
+                report_progress('processing', current_email, len(emails), 
+                            f'Email {current_email}/{len(emails)}: {email["subject"][:40]}...')
+                
                 try:
                     # Check if already processed
                     already_processed = ProcessedEmail.query.filter_by(
@@ -86,44 +113,49 @@ class SyncWorker:
                         print(f"Skipping already processed email: {email['subject']}")
                         continue
                     
-                    # Extract events from email
-                    events, token_usage = self.event_extractor.extract_events(email)  # Now returns tuple
+                    # Extract events
+                    report_progress('extracting', current_email, len(emails), 
+                                f'Extracting events: {email["subject"][:40]}...')
+                    
+                    # Create a wrapper callback for rate limiting
+                    def rate_limit_callback(stage, current, total, message):
+                        if progress_callback:
+                            progress_callback(stage, current, total, message)
+
+                    events, token_usage = self.event_extractor.extract_events(email, progress_callback=rate_limit_callback)
+
                     
                     # Track token usage
                     cost_tracker.add_openai_usage(
                         token_usage['input_tokens'],
                         token_usage['output_tokens']
                     )
-                    
-                    # Track Gmail API calls (approximate)
-                    cost_tracker.add_gmail_call()  # For fetching email list
-                    cost_tracker.gmail_calls += 1  # For fetching each email details
+                    cost_tracker.add_gmail_call()
+                    cost_tracker.gmail_calls += 1
                     
                     if events:
+                        # Filter past events
                         from datetime import datetime, timedelta
                         now = datetime.now()
                         
-                        # Only keep future events (or events from today)
                         future_events = []
                         for event in events:
                             try:
                                 event_start = datetime.fromisoformat(event['start_datetime'])
-                                # Keep events that haven't ended yet (or started today)
                                 if event_start.date() >= now.date():
                                     future_events.append(event)
                                 else:
                                     print(f"Skipping past event: {event['title']} on {event_start.date()}")
                             except:
-                                # If we can't parse the date, keep the event to be safe
                                 future_events.append(event)
                         
                         events = future_events
+                    
                     # Check if email has too many events
                     MAX_EVENTS_PER_EMAIL = 60
                     if events and len(events) > MAX_EVENTS_PER_EMAIL:
                         print(f"⚠️ Email has {len(events)} events (max {MAX_EVENTS_PER_EMAIL})")
                         
-                        # Store info about the overflow
                         results['large_emails'] = results.get('large_emails', [])
                         results['large_emails'].append({
                             'subject': email['subject'],
@@ -132,10 +164,8 @@ class SyncWorker:
                             'email_id': email['id']
                         })
                         
-                        # Only process first 60 events
                         events = events[:MAX_EVENTS_PER_EMAIL]
-                        
-                        print(f"Processing first {MAX_EVENTS_PER_EMAIL} events. User will be notified.")
+                        print(f"Processing first {MAX_EVENTS_PER_EMAIL} events.")
 
                     if events:
                         print(f"Found {len(events)} event(s) in: {email['subject']}")
@@ -143,30 +173,33 @@ class SyncWorker:
                         
                         event_ids = []
                         
-                        # Add each event to calendar (with deduplication)
-                        # Add each event to calendar (with deduplication)
-                        for event in events:
+                        # Add events to calendar
+                        for event_num, event in enumerate(events):
+                            # Update progress for each event
+                            report_progress('adding', current_email, len(emails), 
+                                        f'Adding event {event_num + 1}/{len(events)}: {event["title"][:30]}...')
+                            
                             try:
-                                # Parse start datetime for database comparison
+                                # Parse start datetime
                                 try:
                                     event_start_dt = datetime.fromisoformat(event['start_datetime'])
                                 except:
                                     print(f"Could not parse datetime for event: {event['title']}")
                                     continue
                                 
-                                # Create a unique key for this event
+                                # Create unique key
                                 event_key = (
                                     event['title'].lower().strip(),
                                     event['start_datetime']
                                 )
                                 
-                                # Check if already added in THIS sync (in-memory cache)
+                                # Check in-memory cache
                                 if event_key in added_events_cache:
                                     print(f"Skipping duplicate event (this sync): {event['title']}")
                                     results['duplicates_skipped'] += 1
                                     continue
                                 
-                                # Check if event already exists in database (from previous syncs)
+                                # Check database
                                 existing_event = CalendarEvent.query.filter_by(
                                     user_id=self.user.id,
                                     event_title=event['title'],
@@ -178,39 +211,36 @@ class SyncWorker:
                                     results['duplicates_skipped'] += 1
                                     continue
                                 
+                                # Format and add event
                                 gcal_event = self.event_extractor.format_for_google_calendar(
-                                    event, 
+                                    event,
                                     email_id=email['id'],
                                     email_subject=email['subject']
                                 )
                                 
-                                # Skip if event formatting failed
                                 if not gcal_event:
                                     print(f"Skipping invalid event: {event.get('title', 'Unknown')}")
                                     continue
                                 
                                 event_id = self.calendar_service.add_event(gcal_event)
                                 
-                                # Store in database (NEW)
-                                from models import CalendarEvent
+                                # Store in database
                                 cal_event = CalendarEvent(
                                     user_id=self.user.id,
-                                    processed_email_id=processed.id if processed else None,  # We'll set this after saving processed
                                     gcal_event_id=event_id,
                                     gcal_calendar_id=self.user.sift_calendar_id,
                                     event_title=event['title'],
-                                    start_datetime=datetime.fromisoformat(event['start_datetime']),
+                                    start_datetime=event_start_dt,
                                     end_datetime=datetime.fromisoformat(event.get('end_datetime')) if event.get('end_datetime') else None,
                                     location=event.get('location')
                                 )
                                 db.session.add(cal_event)
                                 event_ids.append(event_id)
                                 
-                                # Mark this event as added
+                                # Mark as added
                                 added_events_cache.add(event_key)
                                 results['events_added'] += 1
-                                cost_tracker.add_calendar_call()  # Track calendar API call
-
+                                cost_tracker.add_calendar_call()
                                 
                             except Exception as e:
                                 print(f"Error adding event to calendar: {e}")
@@ -220,7 +250,7 @@ class SyncWorker:
                                     'error': str(e)
                                 })
                         
-                        # Mark email as processed with enhanced info (UPDATED)
+                        # Mark email as processed
                         processed = ProcessedEmail(
                             user_id=self.user.id,
                             email_id=email['id'],
@@ -228,9 +258,18 @@ class SyncWorker:
                             email_date=self._parse_email_date(email.get('date')),
                             event_created=len(event_ids) > 0,
                             events_count=len(event_ids),
-                            processing_status='success',
+                            processing_status='success'
                         )
                         db.session.add(processed)
+                        
+                        # Link events to processed email
+                        db.session.flush()
+                        for cal_event in CalendarEvent.query.filter(
+                            CalendarEvent.gcal_event_id.in_(event_ids),
+                            CalendarEvent.user_id == self.user.id
+                        ).all():
+                            cal_event.processed_email_id = processed.id
+                            
                     else:
                         # No events found
                         processed = ProcessedEmail(
@@ -254,6 +293,9 @@ class SyncWorker:
                     })
                     db.session.rollback()
                     continue
+            
+            # Final stage
+            report_progress('complete', len(emails), len(emails), 'Sync complete!')
             
             # Update last sync time
             self.user.last_sync = datetime.utcnow()
@@ -284,6 +326,7 @@ class SyncWorker:
             return results
             
         except Exception as e:
+            report_progress('error', 0, 1, f'Fatal error: {str(e)}')
             print(f"Fatal error during sync: {e}")
             import traceback
             traceback.print_exc()

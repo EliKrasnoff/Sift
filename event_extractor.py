@@ -17,26 +17,20 @@ class EventExtractor:
         
         self.deployment_name = Config.AZURE_OPENAI_DEPLOYMENT
     
-    def extract_events(self, email_data):
+    def extract_events(self, email_data, progress_callback=None):
         """
         Extract event information from an email
         
         Args:
             email_data (dict): Email with 'subject', 'body', 'sender', 'date'
+            progress_callback (function): Optional callback for progress updates
             
         Returns:
-            list: List of extracted events, each as a dict with:
-                - title (str)
-                - start_datetime (str): ISO format
-                - end_datetime (str): ISO format
-                - location (str, optional)
-                - description (str)
-                - rsvp_required (bool)
-                - rsvp_link (str, optional)
+            tuple: (events list, token_usage dict)
         """
         import time
         prompt = self._build_extraction_prompt(email_data)
-    
+
         max_retries = 3
         retry_delay = 10  # seconds
         
@@ -62,11 +56,11 @@ class EventExtractor:
 
                 # Remove markdown code blocks if present
                 if result_text.startswith('```json'):
-                    result_text = result_text[7:]  # Remove ```json
+                    result_text = result_text[7:]
                 if result_text.startswith('```'):
-                    result_text = result_text[3:]  # Remove ```
+                    result_text = result_text[3:]
                 if result_text.endswith('```'):
-                    result_text = result_text[:-3]  # Remove trailing ```
+                    result_text = result_text[:-3]
                 result_text = result_text.strip()
 
                 # Parse JSON response
@@ -96,7 +90,20 @@ class EventExtractor:
                 # Check if it's a rate limit error
                 if 'rate limit' in error_message.lower() and attempt < max_retries - 1:
                     print(f"Rate limit hit, waiting {retry_delay} seconds before retry {attempt + 1}/{max_retries}")
-                    time.sleep(retry_delay)
+                    
+                    # Report progress with countdown
+                    if progress_callback:
+                        for countdown in range(retry_delay, 0, -1):
+                            progress_callback(
+                                'rate_limit',
+                                retry_delay - countdown,
+                                retry_delay,
+                                f'⏸️ Rate limit reached. Waiting {countdown}s before retry {attempt + 1}/{max_retries}...'
+                            )
+                            time.sleep(1)
+                    else:
+                        time.sleep(retry_delay)
+                    
                     retry_delay *= 2  # Exponential backoff
                     continue
                 
