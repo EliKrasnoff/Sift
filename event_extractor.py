@@ -160,33 +160,40 @@ IMPORTANT:
         """
         from datetime import datetime, timedelta
         
-        start_dt = event['start_datetime']
+        start_dt = event.get('start_datetime')
         end_dt = event.get('end_datetime')
         
-       # If no end time provided, default to 1 hour after start
-        if not end_dt or end_dt == 'null' or end_dt is None:
+        # Handle missing start_datetime
+        if not start_dt or start_dt == 'None' or start_dt == 'null':
+            print(f"Warning: Event '{event.get('title')}' has no start time, skipping")
+            return None  # Skip this event entirely
+        
+        # Parse start datetime
+        try:
+            start_obj = datetime.fromisoformat(start_dt)
+        except Exception as e:
+            print(f"Error parsing start_datetime '{start_dt}': {e}")
+            return None  # Skip this event
+        
+        # Handle missing end_datetime
+        if not end_dt or end_dt == 'None' or end_dt == 'null':
+            # Default to 1 hour after start
+            end_obj = start_obj + timedelta(hours=1)
+        else:
             try:
-                start_obj = datetime.fromisoformat(start_dt)
-                end_obj = start_obj + timedelta(hours=1)
-                end_dt = end_obj.isoformat()
+                end_obj = datetime.fromisoformat(end_dt)
             except Exception as e:
-                print(f"Warning: Could not parse start_datetime '{start_dt}', using fallback")
-                # If parsing fails completely, use start time as end time
-                end_dt = start_dt if start_dt else None
-                
-                # If still None, use current time + 1 hour
-                if not end_dt:
-                    fallback_time = datetime.now() + timedelta(hours=1)
-                    end_dt = fallback_time.isoformat()
+                print(f"Error parsing end_datetime '{end_dt}', using start + 1 hour")
+                end_obj = start_obj + timedelta(hours=1)
         
         gcal_event = {
             'summary': event['title'],
             'start': {
-                'dateTime': start_dt,
+                'dateTime': start_obj.isoformat(),
                 'timeZone': 'America/Los_Angeles',
             },
             'end': {
-                'dateTime': end_dt,
+                'dateTime': end_obj.isoformat(),
                 'timeZone': 'America/Los_Angeles',
             },
             'description': event.get('description', '')

@@ -213,18 +213,23 @@ def index():
                                 📅 Events added to calendar: ${data.events_added}
                             `;
                             
+                            // Add cost information
+                            if (data.costs) {
+                                message += `<br><br><strong>💰 Cost:</strong><br>`;
+                                message += `Tokens: ${data.costs.openai_input_tokens} in + ${data.costs.openai_output_tokens} out<br>`;
+                                message += `This sync: $${data.costs.total_cost.toFixed(4)}`;
+                            }
+                            
                             if (data.duplicates_skipped) {
                                 message += `<br>⏭️ Duplicate events skipped: ${data.duplicates_skipped}`;
                             }
                             
-                            // NEW: Show warning for large emails
                             if (data.large_emails && data.large_emails.length > 0) {
                                 message += '<br><br><strong>⚠️ Large Emails Detected:</strong><ul>';
                                 data.large_emails.forEach(email => {
                                     message += `<li>${email.subject}: ${email.total_events} events (added first ${email.capped_at})</li>`;
                                 });
                                 message += '</ul>';
-                                message += '<p style="font-size: 12px;">Contact support if you need all events from these emails.</p>';
                             }
                             
                             if (data.errors && data.errors.length > 0) {
@@ -236,7 +241,7 @@ def index():
                         .catch(error => {
                             showStatus('❌ Error during sync: ' + error.message, 'error');
                         });
-                }
+}
                 
                 function viewCalendar() {
                     showStatus('⏳ Loading calendar info...', 'loading');
@@ -454,22 +459,70 @@ def logout():
 
 @app.route('/reset-processed')
 def reset_processed():
-    """Clear all processed emails so we can re-sync"""
+    """Clear all processed emails and all calendar events so we can re-sync"""
     user = GoogleOAuth.get_current_user()
     
     if not user:
         return redirect(url_for('login'))
     
-    from models import ProcessedEmail
-    
-    # Delete all processed emails for this user
-    ProcessedEmail.query.filter_by(user_id=user.id).delete()
-    db.session.commit()
-    
-    return jsonify({
-        'status': 'success',
-        'message': 'All processed emails cleared. Run sync again to reprocess.'
-    })
+    try:
+        from models import ProcessedEmail, CalendarEvent
+        from calendar_service import CalendarService
+        
+        deleted_count = 0
+        
+        # Delete ALL events from Google Calendar (if calendar exists)
+        if user.sift_calendar_id:
+            cal_service = CalendarService(user)
+            
+            try:
+                # Get ALL events from the calendar (no date range)
+                events_result = cal_service.service.events().list(
+                    calendarId=user.sift_calendar_id,
+                    maxResults=2500,  # Google's max per request
+                    singleEvents=True
+                ).execute()
+                
+                events = events_result.get('items', [])
+                
+                # Delete each event
+                for event in events:
+                    try:
+                        cal_service.service.events().delete(
+                            calendarId=user.sift_calendar_id,
+                            eventId=event['id']
+                        ).execute()
+                        deleted_count += 1
+                    except Exception as e:
+                        print(f"Error deleting event {event.get('summary')}: {e}")
+                
+                print(f"Deleted {deleted_count} events from Google Calendar")
+                
+            except Exception as e:
+                print(f"Error accessing calendar: {e}")
+        
+        # Delete all calendar event records from database
+        CalendarEvent.query.filter_by(user_id=user.id).delete()
+        
+        # Delete all processed emails from database
+        ProcessedEmail.query.filter_by(user_id=user.id).delete()
+        
+        db.session.commit()
+        
+        return jsonify({
+            'status': 'success',
+            'message': f'Cleared {deleted_count} calendar events and all processed email records. Run sync to reprocess.'
+        })
+        
+    except Exception as e:
+        print(f"Error during reset: {e}")
+        import traceback
+        traceback.print_exc()
+        db.session.rollback()
+        return jsonify({
+            'status': 'error',
+            'message': f'Error during reset: {str(e)}'
+        }), 500
 
 @app.route('/test-apis')
 def test_apis():

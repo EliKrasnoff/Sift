@@ -159,6 +159,12 @@ class SyncWorker:
                                     continue
                                 
                                 gcal_event = self.event_extractor.format_for_google_calendar(event)
+                                
+                                # Skip if event formatting failed
+                                if not gcal_event:
+                                    print(f"Skipping invalid event: {event.get('title', 'Unknown')}")
+                                    continue
+                                
                                 event_id = self.calendar_service.add_event(gcal_event)
                                 
                                 # Store in database (NEW)
