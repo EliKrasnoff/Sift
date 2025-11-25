@@ -1329,6 +1329,13 @@ def costs_summary():
         'projected_monthly': round(monthly_cost, 2) if monthly_syncs > 0 else 0
     })
 
+@app.after_request
+def add_header(response):
+    """Prevent caching during development"""
+    response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
+    return response
 
 if __name__ == '__main__':
     app.run(debug=True, port=5000)

@@ -2,7 +2,7 @@ from gmail_service import GmailService
 from calendar_service import CalendarService
 from event_extractor import EventExtractor
 from models import db, User, ProcessedEmail, CalendarEvent
-from datetime import datetime
+from datetime import datetime, timedelta
 from cost_tracker import CostTracker
 
 
@@ -135,7 +135,6 @@ class SyncWorker:
                     
                     if events:
                         # Filter past events
-                        from datetime import datetime, timedelta
                         now = datetime.now()
                         
                         future_events = []
