@@ -61,9 +61,9 @@ class GoogleOAuth:
             User object or None if failed
         """
         # Verify state to prevent CSRF
-        # state = session.get('state')
-        # if not state:
-            # raise ValueError("No state in session")
+        state = session.get('state')
+        if not state:
+            raise ValueError("No state in session")
         
         # Create flow and fetch token
         flow = GoogleOAuth.create_flow()
@@ -72,10 +72,24 @@ class GoogleOAuth:
         # Get credentials
         credentials = flow.credentials
         
-        # Get user info from Google
+        # Get user info from Google using People API
         from googleapiclient.discovery import build
+
+        # First, make sure we have valid credentials
+        if not credentials or not credentials.token:
+            raise ValueError("Failed to obtain credentials from Google")
+
+        # Build the oauth2 service with the credentials
         oauth2_service = build('oauth2', 'v2', credentials=credentials)
-        user_info = oauth2_service.userinfo().get().execute()
+
+        # Get user info
+        try:
+            user_info = oauth2_service.userinfo().get().execute()
+        except Exception as e:
+            print(f"Error getting user info: {e}")
+            print(f"Credentials token: {credentials.token}")
+            print(f"Credentials valid: {credentials.valid}")
+            raise
         
         # Create or update user in database
         user = User.query.filter_by(google_id=user_info['id']).first()

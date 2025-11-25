@@ -66,21 +66,78 @@ class User(db.Model):
 
 
 class ProcessedEmail(db.Model):
-    """Track which emails we've already processed to avoid duplicates"""
-    __tablename__ = 'processed_emails'
+    """Track emails that have been processed"""
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)    
+    email_id = db.Column(db.String(100), nullable=False)
+    email_subject = db.Column(db.String(500))
+    email_date = db.Column(db.DateTime)
+    
+    # Processing info
+    processed_at = db.Column(db.DateTime, default=datetime.utcnow)
+    event_created = db.Column(db.Boolean, default=False)
+    events_count = db.Column(db.Integer, default=0)
+    processing_status = db.Column(db.String(50), default='success')  # success, error, partial
+    error_message = db.Column(db.Text)
+    
+    # Relationship to events
+    calendar_events = db.relationship('CalendarEvent', backref='source_email', lazy=True, cascade='all, delete-orphan')
+    
+    __table_args__ = (
+        db.UniqueConstraint('user_id', 'email_id', name='unique_user_email'),
+    )
+
+class SyncCost(db.Model):
+    """Track API costs for each sync"""
+    __tablename__ = 'sync_costs'
     
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
     
-    # Gmail message ID
-    email_id = db.Column(db.String(255), nullable=False)
+    # Sync info
+    sync_date = db.Column(db.DateTime, default=datetime.utcnow)
+    emails_processed = db.Column(db.Integer, default=0)
+    events_extracted = db.Column(db.Integer, default=0)
     
-    # Event extracted (if any)
-    event_created = db.Column(db.Boolean, default=False)
-    calendar_event_id = db.Column(db.String(255))  # Google Calendar event ID
+    # Token usage
+    openai_input_tokens = db.Column(db.Integer, default=0)
+    openai_output_tokens = db.Column(db.Integer, default=0)
     
-    # Tracking
-    processed_at = db.Column(db.DateTime, default=datetime.utcnow)
+    # Costs (in USD)
+    openai_cost = db.Column(db.Float, default=0.0)
+    gmail_api_calls = db.Column(db.Integer, default=0)
+    calendar_api_calls = db.Column(db.Integer, default=0)
+    total_cost = db.Column(db.Float, default=0.0)
     
-    # Composite unique constraint
-    __table_args__ = (db.UniqueConstraint('user_id', 'email_id', name='_user_email_uc'),)
+    # Metadata
+    model_used = db.Column(db.String(50))  # e.g., "gpt-4", "gpt-3.5-turbo"
+    
+    user = db.relationship('User', backref=db.backref('sync_costs', lazy=True))
+    
+class CalendarEvent(db.Model):
+    """Track calendar events we've created"""
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    processed_email_id = db.Column(db.Integer, db.ForeignKey('processed_email.id'), nullable=True)
+    
+    # Google Calendar info
+    gcal_event_id = db.Column(db.String(500), nullable=False)
+    gcal_calendar_id = db.Column(db.String(500))
+    
+    # Event details (for quick lookup)
+    event_title = db.Column(db.String(500))
+    start_datetime = db.Column(db.DateTime)
+    end_datetime = db.Column(db.DateTime)
+    location = db.Column(db.String(500))
+    
+    # Metadata
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    is_canceled = db.Column(db.Boolean, default=False)
+    last_updated = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    # User actions
+    user_deleted = db.Column(db.Boolean, default=False)  # Track if user manually deleted
+    
+    __table_args__ = (
+        db.UniqueConstraint('user_id', 'gcal_event_id', name='unique_user_gcal_event'),
+    )
