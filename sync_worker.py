@@ -198,7 +198,6 @@ class SyncWorker:
                             event_created=len(event_ids) > 0,
                             events_count=len(event_ids),
                             processing_status='success',
-                            calendar_event_id=event_ids[0] if event_ids else None
                         )
                         db.session.add(processed)
                     else:
@@ -206,7 +205,10 @@ class SyncWorker:
                         processed = ProcessedEmail(
                             user_id=self.user.id,
                             email_id=email['id'],
-                            event_created=False
+                            email_subject=email['subject'],
+                            email_date=self._parse_email_date(email.get('date')),
+                            event_created=False,
+                            processing_status='success'
                         )
                         db.session.add(processed)
                     

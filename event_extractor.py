@@ -163,15 +163,21 @@ IMPORTANT:
         start_dt = event['start_datetime']
         end_dt = event.get('end_datetime')
         
-        # If no end time provided, default to 1 hour after start
+       # If no end time provided, default to 1 hour after start
         if not end_dt or end_dt == 'null' or end_dt is None:
             try:
                 start_obj = datetime.fromisoformat(start_dt)
                 end_obj = start_obj + timedelta(hours=1)
                 end_dt = end_obj.isoformat()
-            except:
-                # If parsing fails, just add 1 hour as string
-                end_dt = start_dt.replace('T', 'T').replace(':00', ':00')  # Keep same format
+            except Exception as e:
+                print(f"Warning: Could not parse start_datetime '{start_dt}', using fallback")
+                # If parsing fails completely, use start time as end time
+                end_dt = start_dt if start_dt else None
+                
+                # If still None, use current time + 1 hour
+                if not end_dt:
+                    fallback_time = datetime.now() + timedelta(hours=1)
+                    end_dt = fallback_time.isoformat()
         
         gcal_event = {
             'summary': event['title'],
