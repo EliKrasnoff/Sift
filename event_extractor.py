@@ -148,12 +148,14 @@ IMPORTANT:
 """
         return prompt
     
-    def format_for_google_calendar(self, event):
+    def format_for_google_calendar(self, event, email_id=None, email_subject=None):
         """
         Convert extracted event to Google Calendar API format
         
         Args:
             event (dict): Extracted event data
+            email_id (str): Gmail message ID (optional)
+            email_subject (str): Email subject (optional)
             
         Returns:
             dict: Google Calendar event object
@@ -166,18 +168,17 @@ IMPORTANT:
         # Handle missing start_datetime
         if not start_dt or start_dt == 'None' or start_dt == 'null':
             print(f"Warning: Event '{event.get('title')}' has no start time, skipping")
-            return None  # Skip this event entirely
+            return None
         
         # Parse start datetime
         try:
             start_obj = datetime.fromisoformat(start_dt)
         except Exception as e:
             print(f"Error parsing start_datetime '{start_dt}': {e}")
-            return None  # Skip this event
+            return None
         
         # Handle missing end_datetime
         if not end_dt or end_dt == 'None' or end_dt == 'null':
-            # Default to 1 hour after start
             end_obj = start_obj + timedelta(hours=1)
         else:
             try:
@@ -185,6 +186,16 @@ IMPORTANT:
             except Exception as e:
                 print(f"Error parsing end_datetime '{end_dt}', using start + 1 hour")
                 end_obj = start_obj + timedelta(hours=1)
+        
+        # Build description with email link
+        description = event.get('description', '')
+        
+        # Add source email link
+        if email_id:
+            gmail_link = f"https://mail.google.com/mail/u/0/#inbox/{email_id}"
+            description += f"\n\n📧 Source Email: {gmail_link}"
+            if email_subject:
+                description += f"\nSubject: {email_subject}"
         
         gcal_event = {
             'summary': event['title'],
@@ -196,7 +207,7 @@ IMPORTANT:
                 'dateTime': end_obj.isoformat(),
                 'timeZone': 'America/Los_Angeles',
             },
-            'description': event.get('description', '')
+            'description': description
         }
         
         if event.get('location'):

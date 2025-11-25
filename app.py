@@ -1,8 +1,9 @@
-from flask import Flask, redirect, url_for, request, session, jsonify, render_template_string
+from flask import Flask, redirect, url_for, request, session, jsonify, render_template_string, Response
 from config import Config
 from models import db, User, ProcessedEmail, CalendarEvent
 from auth import GoogleOAuth
 from datetime import datetime
+import json
 
 
 app = Flask(__name__)
@@ -16,6 +17,33 @@ with app.app_context():
     db.create_all()
 
 
+# Simple progress tracker
+class ProgressTracker:
+    def __init__(self):
+        self.listeners = []
+        self.current_status = {
+            'stage': 'idle',
+            'progress': 0,
+            'message': 'Ready',
+            'total': 0,
+            'current': 0
+        }
+    
+    def update(self, stage, current, total, message):
+        self.current_status = {
+            'stage': stage,
+            'progress': int((current / total * 100)) if total > 0 else 0,
+            'message': message,
+            'total': total,
+            'current': current
+        }
+    
+    def get_status(self):
+        return self.current_status
+
+progress_tracker = ProgressTracker()
+
+
 @app.route('/')
 def index():
     """Home page"""
@@ -26,222 +54,565 @@ def index():
         <!DOCTYPE html>
         <html>
         <head>
-            <title>Sift - Authenticated</title>
+            <title>Sift - Email Calendar Sync</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
             <style>
+                * {
+                    margin: 0;
+                    padding: 0;
+                    box-sizing: border-box;
+                }
+                
                 body {
-                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-                    max-width: 800px;
-                    margin: 50px auto;
+                    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                    min-height: 100vh;
                     padding: 20px;
-                }
-                .success {
-                    background: #d4edda;
-                    border: 1px solid #c3e6cb;
-                    color: #155724;
-                    padding: 20px;
-                    border-radius: 8px;
-                    margin: 20px 0;
-                }
-                .button {
-                    background: #007bff;
-                    color: white;
-                    padding: 12px 24px;
-                    border-radius: 6px;
-                    text-decoration: none;
-                    display: inline-block;
-                    margin: 10px 10px 10px 0;
-                    border: none;
-                    cursor: pointer;
-                    font-size: 14px;
-                }
-                .button:hover {
-                    background: #0056b3;
-                }
-                .sync-button {
-                    background: #28a745;
-                }
-                .sync-button:hover {
-                    background: #218838;
-                }
-                .calendar-button {
-                    background: #6f42c1;
-                }
-                .calendar-button:hover {
-                    background: #5a32a3;
-                }
-                .reset-button {
-                    background: #ffc107;
-                    color: #000;
-                }
-                .reset-button:hover {
-                    background: #e0a800;
-                }
-                .clear-button {
-                    background: #fd7e14;
-                }
-                .clear-button:hover {
-                    background: #e8590c;
-                }
-                .logout {
-                    background: #dc3545;
-                }
-                .logout:hover {
-                    background: #c82333;
-                }
-                h1 {
                     color: #333;
                 }
-                .actions {
-                    margin: 30px 0;
+                
+                .container {
+                    max-width: 900px;
+                    margin: 0 auto;
                 }
+                
+                .card {
+                    background: white;
+                    border-radius: 16px;
+                    padding: 32px;
+                    margin-bottom: 24px;
+                    box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+                }
+                
+                h1 {
+                    font-size: 32px;
+                    font-weight: 700;
+                    color: #1a202c;
+                    margin-bottom: 8px;
+                }
+                
+                .subtitle {
+                    font-size: 16px;
+                    color: #718096;
+                    margin-bottom: 24px;
+                }
+                
+                .user-info {
+                    background: #f7fafc;
+                    border-left: 4px solid #667eea;
+                    padding: 16px;
+                    border-radius: 8px;
+                    margin-bottom: 24px;
+                }
+                
+                .user-info strong {
+                    color: #2d3748;
+                    display: block;
+                    margin-bottom: 4px;
+                }
+                
+                .user-info span {
+                    color: #4a5568;
+                    font-size: 14px;
+                }
+                
                 .section-title {
                     font-size: 18px;
                     font-weight: 600;
-                    margin-top: 30px;
-                    margin-bottom: 10px;
-                    color: #555;
+                    color: #2d3748;
+                    margin-bottom: 16px;
+                    display: flex;
+                    align-items: center;
+                    gap: 8px;
                 }
-                #status {
-                    margin-top: 20px;
-                    padding: 15px;
-                    border-radius: 6px;
-                    display: none;
+                
+                .how-it-works {
+                    background: #edf2f7;
+                    border-radius: 12px;
+                    padding: 24px;
+                    margin-bottom: 32px;
                 }
-                #status.loading {
-                    background: #fff3cd;
-                    border: 1px solid #ffc107;
-                    color: #856404;
-                    display: block;
+                
+                .how-it-works h2 {
+                    font-size: 20px;
+                    font-weight: 600;
+                    color: #2d3748;
+                    margin-bottom: 16px;
                 }
-                #status.success {
-                    background: #d4edda;
-                    border: 1px solid #c3e6cb;
-                    color: #155724;
-                    display: block;
+                
+                .how-it-works ol {
+                    list-style: none;
+                    counter-reset: step-counter;
                 }
-                #status.error {
-                    background: #f8d7da;
-                    border: 1px solid #f5c6cb;
-                    color: #721c24;
-                    display: block;
+                
+                .how-it-works li {
+                    counter-increment: step-counter;
+                    position: relative;
+                    padding-left: 40px;
+                    margin-bottom: 12px;
+                    line-height: 1.6;
+                    color: #4a5568;
                 }
-                .info-box {
-                    background: #f8f9fa;
-                    border: 1px solid #dee2e6;
-                    padding: 15px;
-                    border-radius: 6px;
-                    margin: 15px 0;
-                }
-                .date-input {
-                    padding: 8px;
-                    border: 1px solid #ced4da;
-                    border-radius: 4px;
-                    margin-right: 10px;
+                
+                .how-it-works li::before {
+                    content: counter(step-counter);
+                    position: absolute;
+                    left: 0;
+                    top: 0;
+                    background: #667eea;
+                    color: white;
+                    width: 28px;
+                    height: 28px;
+                    border-radius: 50%;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    font-weight: 600;
                     font-size: 14px;
                 }
-                .clear-events-section {
+                
+                .button {
+                    background: #667eea;
+                    color: white;
+                    padding: 12px 24px;
+                    border-radius: 8px;
+                    text-decoration: none;
+                    display: inline-block;
+                    margin: 8px 8px 8px 0;
+                    border: none;
+                    cursor: pointer;
+                    font-size: 14px;
+                    font-weight: 600;
+                    transition: all 0.2s;
+                    font-family: 'Inter', sans-serif;
+                }
+                
+                .button:hover {
+                    background: #5568d3;
+                    transform: translateY(-1px);
+                    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+                }
+                
+                .button:active {
+                    transform: translateY(0);
+                }
+                
+                .button-secondary {
+                    background: #48bb78;
+                }
+                
+                .button-secondary:hover {
+                    background: #38a169;
+                    box-shadow: 0 4px 12px rgba(72, 187, 120, 0.4);
+                }
+                
+                .button-warning {
+                    background: #ed8936;
+                }
+                
+                .button-warning:hover {
+                    background: #dd6b20;
+                    box-shadow: 0 4px 12px rgba(237, 137, 54, 0.4);
+                }
+                
+                .button-danger {
+                    background: #f56565;
+                }
+                
+                .button-danger:hover {
+                    background: #e53e3e;
+                    box-shadow: 0 4px 12px rgba(245, 101, 101, 0.4);
+                }
+                
+                .button-outline {
+                    background: white;
+                    color: #667eea;
+                    border: 2px solid #667eea;
+                }
+                
+                .button-outline:hover {
+                    background: #667eea;
+                    color: white;
+                }
+                
+                .progress-container {
+                    display: none;
+                    margin: 24px 0;
+                }
+                
+                .progress-bar-wrapper {
+                    width: 100%;
+                    height: 48px;
+                    background: #edf2f7;
+                    border-radius: 24px;
+                    overflow: hidden;
+                    position: relative;
+                    box-shadow: inset 0 2px 4px rgba(0,0,0,0.06);
+                }
+                
+                .progress-bar-fill {
+                    height: 100%;
+                    background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+                    transition: width 0.4s ease;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    color: white;
+                    font-weight: 600;
+                    font-size: 14px;
+                    border-radius: 24px;
+                }
+                
+                .progress-message {
+                    margin-top: 12px;
+                    font-size: 14px;
+                    color: #4a5568;
+                    text-align: center;
+                    font-weight: 500;
+                }
+                
+                .status-box {
+                    margin-top: 24px;
+                    padding: 20px;
+                    border-radius: 12px;
+                    display: none;
+                    animation: slideIn 0.3s ease;
+                }
+                
+                @keyframes slideIn {
+                    from {
+                        opacity: 0;
+                        transform: translateY(-10px);
+                    }
+                    to {
+                        opacity: 1;
+                        transform: translateY(0);
+                    }
+                }
+                
+                .status-box.success {
+                    background: #c6f6d5;
+                    border: 1px solid #9ae6b4;
+                    color: #22543d;
+                    display: block;
+                }
+                
+                .status-box.error {
+                    background: #fed7d7;
+                    border: 1px solid #fc8181;
+                    color: #742a2a;
+                    display: block;
+                }
+                
+                .status-box.loading {
+                    background: #fefcbf;
+                    border: 1px solid #f6e05e;
+                    color: #744210;
+                    display: block;
+                }
+                
+                .calendar-info-box {
+                    background: #f7fafc;
+                    border-radius: 12px;
+                    padding: 20px;
+                    margin-top: 16px;
+                }
+                
+                .event-list {
+                    list-style: none;
+                    margin-top: 16px;
+                }
+                
+                .event-item {
+                    background: white;
+                    padding: 12px 16px;
+                    border-radius: 8px;
+                    margin-bottom: 8px;
+                    border-left: 3px solid #667eea;
+                    font-size: 14px;
+                    color: #4a5568;
+                }
+                
+                .event-item strong {
+                    color: #2d3748;
+                }
+                
+                .actions-grid {
+                    display: grid;
+                    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+                    gap: 12px;
+                    margin: 24px 0;
+                }
+                
+                .helper-text {
+                    font-size: 13px;
+                    color: #718096;
+                    margin-top: 8px;
+                    line-height: 1.5;
+                }
+                
+                .dev-section {
+                    border-top: 2px dashed #e2e8f0;
+                    padding-top: 24px;
+                    margin-top: 24px;
+                }
+                
+                .dev-badge {
+                    display: inline-block;
+                    background: #fed7d7;
+                    color: #c53030;
+                    padding: 4px 12px;
+                    border-radius: 12px;
+                    font-size: 12px;
+                    font-weight: 600;
+                    margin-left: 8px;
+                }
+                
+                a {
+                    color: #667eea;
+                    text-decoration: none;
+                    font-weight: 500;
+                }
+                
+                a:hover {
+                    text-decoration: underline;
+                }
+                
+                .date-input {
+                    padding: 10px 14px;
+                    border: 2px solid #e2e8f0;
+                    border-radius: 8px;
+                    margin-right: 8px;
+                    font-size: 14px;
+                    font-family: 'Inter', sans-serif;
+                    transition: border-color 0.2s;
+                }
+                
+                .date-input:focus {
+                    outline: none;
+                    border-color: #667eea;
+                }
+                
+                .clear-section {
+                    background: #fffaf0;
+                    border: 2px solid #fbd38d;
+                    border-radius: 12px;
+                    padding: 20px;
                     margin: 20px 0;
-                    padding: 15px;
-                    background: #fff3cd;
-                    border: 1px solid #ffc107;
-                    border-radius: 6px;
+                }
+                
+                .logout-section {
+                    text-align: center;
+                    margin-top: 32px;
+                    padding-top: 24px;
+                    border-top: 1px solid #e2e8f0;
                 }
             </style>
         </head>
         <body>
-            <h1>✅ Successfully Connected to Sift!</h1>
-            <div class="success">
-                <p><strong>Email:</strong> {{ email }}</p>
-                <p><strong>Status:</strong> Authenticated and ready to sync</p>
-            </div>
-            
-            <div class="section-title">📧 Email & Calendar Actions</div>
-            <div class="actions">
-                <button onclick="runSync()" class="button sync-button">🔄 Sync Emails Now</button>
-                <button onclick="viewCalendar()" class="button calendar-button">📅 View Calendar Info</button>
-                <a href="/test-apis" class="button">🔧 Test API Access</a>
-            </div>
-            
-            <div id="status"></div>
-            
-            <div class="info-box">
-                <p><strong>💡 How it works:</strong></p>
-                <ul>
-                    <li>Click "Sync Emails Now" to scan your inbox for events</li>
-                    <li>Events are extracted using AI and added to your "Sift - Inbox Events" calendar</li>
-                    <li>View the calendar in your Google Calendar app</li>
-                    <li>You can add events to your personal calendar from there</li>
-                </ul>
-            </div>
-            
-            <div class="section-title">⚙️ Advanced</div>
-            
-            <div class="clear-events-section">
-                <p><strong>🗑️ Clear Events by Date Range</strong></p>
-                <p style="font-size: 12px; color: #666; margin: 5px 0;">Remove all events from your Sift calendar within a specific date range.</p>
-                <div style="margin-top: 10px;">
-                    <input type="date" id="clearStartDate" class="date-input" placeholder="Start Date">
-                    <input type="date" id="clearEndDate" class="date-input" placeholder="End Date">
-                    <button onclick="clearEvents()" class="button clear-button">🗑️ Clear Events</button>
+            <div class="container">
+                <div class="card">
+                    <h1>📧 Sift</h1>
+                    <p class="subtitle">Automatically sync email events to your calendar</p>
+                    
+                    <div class="user-info">
+                        <strong>✓ Connected</strong>
+                        <span>{{ email }}</span>
+                    </div>
+                    
+                    <div class="how-it-works">
+                        <h2>💡 How It Works</h2>
+                        <ol>
+                            <li>Click "Sync Emails" to scan your inbox for event information</li>
+                            <li>AI extracts event details (date, time, location) from your emails</li>
+                            <li>Events are added to your "Sift - Inbox Events" calendar in Google Calendar</li>
+                            <li>View and manage events directly in your Google Calendar app</li>
+                        </ol>
+                    </div>
+                    
+                    <div class="section-title">
+                        🔄 Sync Actions
+                    </div>
+                    
+                    <div class="actions-grid">
+                        <button onclick="runSync()" class="button button-secondary">
+                            🔄 Sync Emails Now
+                        </button>
+                        <button onclick="viewCalendar()" class="button">
+                            📅 View Calendar Info
+                        </button>
+                    </div>
+                    
+                    <div id="progressContainer" class="progress-container">
+                        <div class="progress-bar-wrapper">
+                            <div id="progressFill" class="progress-bar-fill" style="width: 0%">
+                                0%
+                            </div>
+                        </div>
+                        <div id="progressMessage" class="progress-message">Starting...</div>
+                    </div>
+                    
+                    <div id="status" class="status-box"></div>
+                </div>
+                
+                <div class="card">
+                    <div class="section-title">
+                        ⚙️ Advanced Options
+                    </div>
+                    
+                    <div class="clear-section">
+                        <strong style="display: block; margin-bottom: 12px; color: #744210;">
+                            🗑️ Clear Events by Date Range
+                        </strong>
+                        <p class="helper-text" style="margin-bottom: 16px;">
+                            Remove events from your Sift calendar within a specific date range
+                        </p>
+                        <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px;">
+                            <input type="date" id="clearStartDate" class="date-input">
+                            <input type="date" id="clearEndDate" class="date-input">
+                            <button onclick="clearEvents()" class="button button-warning">
+                                Clear Events
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div style="margin-top: 20px;">
+                        <button onclick="resetProcessed()" class="button button-danger">
+                            🔄 Reset All Data
+                        </button>
+                        <p class="helper-text">
+                            Clears all calendar events and processed email records. Use this to start fresh.
+                        </p>
+                    </div>
+                    
+                    <div class="dev-section">
+                        <div class="section-title">
+                            🔧 Developer Tools
+                            <span class="dev-badge">DEV ONLY</span>
+                        </div>
+                        <a href="/test-apis" class="button button-outline">
+                            Test API Connections
+                        </a>
+                        <p class="helper-text">
+                            Verify Gmail and Calendar API access (remove before production)
+                        </p>
+                    </div>
+                    
+                    <div class="logout-section">
+                        <a href="/logout" class="button button-outline button-danger">
+                            Logout
+                        </a>
+                    </div>
                 </div>
             </div>
             
-            <button onclick="resetProcessed()" class="button reset-button">🔄 Reset Processed Emails</button>
-            <p style="font-size: 12px; color: #666; margin-top: 5px;">Use this to reprocess all emails from scratch (useful for testing)</p>
-            
-            <div class="section-title">Account</div>
-            <a href="/logout" class="button logout">Logout</a>
-            
             <script>
+                let eventSource = null;
+                
                 function showStatus(message, type) {
                     const statusDiv = document.getElementById('status');
-                    statusDiv.className = type;
+                    statusDiv.className = 'status-box ' + type;
                     statusDiv.innerHTML = message;
                 }
                 
+                function hideStatus() {
+                    document.getElementById('status').style.display = 'none';
+                }
+                
                 function runSync() {
-                    showStatus('⏳ Syncing emails... This may take a minute.', 'loading');
+                    const progressContainer = document.getElementById('progressContainer');
+                    const progressFill = document.getElementById('progressFill');
+                    const progressMessage = document.getElementById('progressMessage');
                     
-                    fetch('/sync')
+                    // Show progress, hide status
+                    progressContainer.style.display = 'block';
+                    hideStatus();
+                    
+                    // Reset progress
+                    progressFill.style.width = '0%';
+                    progressFill.textContent = '0%';
+                    progressMessage.textContent = 'Starting sync...';
+                    
+                    // Connect to progress stream
+                    if (eventSource) {
+                        eventSource.close();
+                    }
+                    
+                    eventSource = new EventSource('/sync-progress');
+                    
+                    eventSource.onmessage = function(event) {
+                        const data = JSON.parse(event.data);
+                        
+                        // Update progress bar
+                        progressFill.style.width = data.progress + '%';
+                        progressFill.textContent = data.progress + '%';
+                        progressMessage.textContent = data.message;
+                        
+                        // If complete or error, close and show results
+                        if (data.stage === 'complete') {
+                            eventSource.close();
+                            setTimeout(() => {
+                                progressContainer.style.display = 'none';
+                                fetchSyncResults();
+                            }, 800);
+                        } else if (data.stage === 'error') {
+                            eventSource.close();
+                            progressContainer.style.display = 'none';
+                            showStatus('❌ Error during sync: ' + data.message, 'error');
+                        }
+                    };
+                    
+                    eventSource.onerror = function() {
+                        eventSource.close();
+                        progressContainer.style.display = 'none';
+                        showStatus('❌ Connection error. Please try again.', 'error');
+                    };
+                    
+                    // Start the sync
+                    fetch('/sync').catch(error => {
+                        if (eventSource) eventSource.close();
+                        progressContainer.style.display = 'none';
+                        showStatus('❌ Error starting sync: ' + error.message, 'error');
+                    });
+                }
+                
+                function fetchSyncResults() {
+                    showStatus('⏳ Finalizing results...', 'loading');
+                    
+                    // The sync already completed, just get the last result
+                    fetch('/sync-result')
                         .then(response => response.json())
                         .then(data => {
                             let message = `
-                                <strong>✅ Sync Complete!</strong><br>
-                                📧 Emails scanned: ${data.emails_scanned}<br>
-                                📝 Emails processed: ${data.emails_processed}<br>
-                                🎉 Events extracted: ${data.events_extracted}<br>
-                                📅 Events added to calendar: ${data.events_added}
+                                <strong style="font-size: 18px;">✅ Sync Complete!</strong><br><br>
+                                <div style="line-height: 2;">
+                                📧 <strong>Emails scanned:</strong> ${data.emails_scanned}<br>
+                                📝 <strong>Emails processed:</strong> ${data.emails_processed}<br>
+                                🎉 <strong>Events extracted:</strong> ${data.events_extracted}<br>
+                                📅 <strong>Events added:</strong> ${data.events_added}
                             `;
                             
-                            // Add cost information
-                            if (data.costs) {
-                                message += `<br><br><strong>💰 Cost:</strong><br>`;
-                                message += `Tokens: ${data.costs.openai_input_tokens} in + ${data.costs.openai_output_tokens} out<br>`;
-                                message += `This sync: $${data.costs.total_cost.toFixed(4)}`;
-                            }
-                            
-                            if (data.duplicates_skipped) {
-                                message += `<br>⏭️ Duplicate events skipped: ${data.duplicates_skipped}`;
-                            }
-                            
-                            if (data.large_emails && data.large_emails.length > 0) {
-                                message += '<br><br><strong>⚠️ Large Emails Detected:</strong><ul>';
-                                data.large_emails.forEach(email => {
-                                    message += `<li>${email.subject}: ${email.total_events} events (added first ${email.capped_at})</li>`;
-                                });
-                                message += '</ul>';
+                            if (data.duplicates_skipped > 0) {
+                                message += `<br>⏭️ <strong>Duplicates skipped:</strong> ${data.duplicates_skipped}`;
                             }
                             
                             if (data.errors && data.errors.length > 0) {
                                 message += `<br><br>⚠️ ${data.errors.length} error(s) occurred`;
                             }
                             
+                            if (data.costs) {
+                                message += `<br><br>💰 <strong>Cost:</strong> $${data.costs.total_cost.toFixed(4)}`;
+                            }
+                            
+                            message += '</div>';
+                            
                             showStatus(message, 'success');
                         })
                         .catch(error => {
-                            showStatus('❌ Error during sync: ' + error.message, 'error');
+                            showStatus('❌ Error fetching results', 'error');
                         });
-}
+                }
                 
                 function viewCalendar() {
                     showStatus('⏳ Loading calendar info...', 'loading');
@@ -251,22 +622,38 @@ def index():
                         .then(data => {
                             let eventsHtml = '';
                             if (data.events && data.events.length > 0) {
-                                eventsHtml = '<br><br><strong>Recent events:</strong><ul>';
-                                data.events.forEach(event => {
-                                    eventsHtml += `<li>${event.summary} - ${event.start || 'No date'}</li>`;
+                                eventsHtml = '<ul class="event-list">';
+                                data.events.slice(0, 10).forEach(event => {
+                                    const startTime = event.start ? new Date(event.start).toLocaleString() : 'No date';
+                                    eventsHtml += `
+                                        <li class="event-item">
+                                            <strong>${event.summary}</strong><br>
+                                            📅 ${startTime}
+                                            ${event.location ? '<br>📍 ' + event.location : ''}
+                                        </li>
+                                    `;
                                 });
                                 eventsHtml += '</ul>';
+                                
+                                if (data.events.length > 10) {
+                                    eventsHtml += `<p class="helper-text">Showing 10 of ${data.event_count} total events</p>`;
+                                }
                             } else {
-                                eventsHtml = '<br><br>No events yet. Try running a sync!';
+                                eventsHtml = '<p class="helper-text">No upcoming events. Try running a sync!</p>';
                             }
                             
                             let message = `
-                                <strong>📅 Calendar Info</strong><br>
-                                Calendar ID: ${data.calendar_id}<br>
-                                Total events: ${data.event_count}
-                                ${eventsHtml}
-                                <br><br>
-                                <a href="https://calendar.google.com" target="_blank" style="color: #007bff;">Open Google Calendar →</a>
+                                <strong style="font-size: 18px;">📅 Calendar Information</strong>
+                                <div class="calendar-info-box">
+                                    <p><strong>Calendar Name:</strong> Sift - Inbox Events</p>
+                                    <p><strong>Total Events:</strong> ${data.event_count}</p>
+                                    ${eventsHtml}
+                                    <div style="margin-top: 16px;">
+                                        <a href="https://calendar.google.com" target="_blank" class="button button-outline">
+                                            Open Google Calendar →
+                                        </a>
+                                    </div>
+                                </div>
                             `;
                             
                             showStatus(message, 'success');
@@ -277,16 +664,20 @@ def index():
                 }
                 
                 function resetProcessed() {
-                    if (!confirm('Are you sure you want to reset? This will allow all emails to be reprocessed.')) {
+                    if (!confirm('⚠️ This will delete ALL events from your Sift calendar and reset all processed email records. Are you sure?')) {
                         return;
                     }
                     
-                    showStatus('⏳ Resetting processed emails...', 'loading');
+                    showStatus('⏳ Resetting all data...', 'loading');
                     
                     fetch('/reset-processed')
                         .then(response => response.json())
                         .then(data => {
-                            showStatus('✅ ' + data.message + '<br><br>You can now run a sync to reprocess all emails.', 'success');
+                            if (data.status === 'success') {
+                                showStatus('✅ ' + data.message + '<br><br>You can now run a new sync.', 'success');
+                            } else {
+                                showStatus('❌ ' + data.message, 'error');
+                            }
                         })
                         .catch(error => {
                             showStatus('❌ Error resetting: ' + error.message, 'error');
@@ -302,7 +693,7 @@ def index():
                         return;
                     }
                     
-                    if (!confirm(`Are you sure you want to delete all events from ${startDate} to ${endDate}?`)) {
+                    if (!confirm(`Delete all events from ${startDate} to ${endDate}?`)) {
                         return;
                     }
                     
@@ -336,74 +727,132 @@ def index():
         """
         return render_template_string(html, email=user.email)
     else:
-        # ... non-authenticated HTML (no changes)    else:
+        # Landing page for non-authenticated users
         html = """
         <!DOCTYPE html>
         <html>
         <head>
-            <title>Sift - Event Calendar from Your Inbox</title>
+            <title>Sift - Email Calendar Sync</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
             <style>
+                * {
+                    margin: 0;
+                    padding: 0;
+                    box-sizing: border-box;
+                }
+                
                 body {
-                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-                    max-width: 800px;
-                    margin: 50px auto;
+                    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                    min-height: 100vh;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
                     padding: 20px;
+                }
+                
+                .landing-container {
+                    max-width: 600px;
+                    background: white;
+                    border-radius: 24px;
+                    padding: 48px;
+                    box-shadow: 0 20px 60px rgba(0,0,0,0.3);
                     text-align: center;
                 }
+                
+                .logo {
+                    font-size: 64px;
+                    margin-bottom: 16px;
+                }
+                
                 h1 {
-                    color: #333;
                     font-size: 48px;
-                    margin-bottom: 10px;
+                    font-weight: 700;
+                    color: #1a202c;
+                    margin-bottom: 16px;
                 }
+                
                 .tagline {
-                    color: #666;
                     font-size: 20px;
+                    color: #718096;
                     margin-bottom: 40px;
+                    line-height: 1.6;
                 }
+                
                 .login-button {
-                    background: #4285f4;
+                    background: #667eea;
                     color: white;
-                    padding: 16px 32px;
-                    border-radius: 8px;
+                    padding: 16px 40px;
+                    border-radius: 12px;
                     text-decoration: none;
                     display: inline-block;
                     font-size: 18px;
-                    font-weight: 500;
-                    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+                    font-weight: 600;
+                    box-shadow: 0 10px 25px rgba(102, 126, 234, 0.4);
+                    transition: all 0.3s;
                 }
+                
                 .login-button:hover {
-                    background: #357ae8;
+                    background: #5568d3;
+                    transform: translateY(-2px);
+                    box-shadow: 0 15px 35px rgba(102, 126, 234, 0.5);
                 }
+                
                 .features {
                     text-align: left;
-                    margin: 40px auto;
-                    max-width: 500px;
+                    margin-top: 48px;
+                    display: grid;
+                    gap: 20px;
                 }
+                
                 .feature {
-                    margin: 20px 0;
+                    display: flex;
+                    align-items: flex-start;
+                    gap: 12px;
+                    padding: 16px;
+                    background: #f7fafc;
+                    border-radius: 12px;
+                }
+                
+                .feature-icon {
+                    font-size: 24px;
+                    flex-shrink: 0;
+                }
+                
+                .feature-text {
+                    color: #4a5568;
+                    line-height: 1.6;
                 }
             </style>
         </head>
         <body>
-            <h1>📧 Sift</h1>
-            <p class="tagline">Never miss an event buried in your inbox</p>
-            
-            <a href="/login" class="login-button">
-                Connect with Google
-            </a>
-            
-            <div class="features">
-                <div class="feature">
-                    ✨ AI extracts events from emails automatically
-                </div>
-                <div class="feature">
-                    📅 Creates a separate "Sift" calendar in Google Calendar
-                </div>
-                <div class="feature">
-                    🔄 Syncs in real-time (or every few hours)
-                </div>
-                <div class="feature">
-                    🎯 Add events to your personal calendar in one click
+            <div class="landing-container">
+                <div class="logo">📧</div>
+                <h1>Sift</h1>
+                <p class="tagline">Never miss an event buried in your inbox</p>
+                
+                <a href="/login" class="login-button">
+                    Connect with Google
+                </a>
+                
+                <div class="features">
+                    <div class="feature">
+                        <div class="feature-icon">✨</div>
+                        <div class="feature-text">AI automatically extracts events from your emails</div>
+                    </div>
+                    <div class="feature">
+                        <div class="feature-icon">📅</div>
+                        <div class="feature-text">Creates a separate "Sift" calendar in Google Calendar</div>
+                    </div>
+                    <div class="feature">
+                        <div class="feature-icon">🔄</div>
+                        <div class="feature-text">Syncs on-demand or runs in the background</div>
+                    </div>
+                    <div class="feature">
+                        <div class="feature-icon">🎯</div>
+                        <div class="feature-text">View source emails directly from calendar events</div>
+                    </div>
                 </div>
             </div>
         </body>
@@ -411,6 +860,61 @@ def index():
         """
         return render_template_string(html)
 
+
+# Store last sync result
+last_sync_result = {}
+
+@app.route('/sync-progress')
+def sync_progress():
+    """Server-Sent Events endpoint for real-time progress"""
+    def generate():
+        import time
+        last_stage = None
+        
+        while True:
+            status = progress_tracker.get_status()
+            
+            # Only send if status changed
+            if status['stage'] != last_stage or status['stage'] in ['processing', 'extracting', 'adding']:
+                yield f"data: {json.dumps(status)}\n\n"
+                last_stage = status['stage']
+            
+            # Stop streaming when done
+            if status['stage'] in ['complete', 'error']:
+                break
+            
+            time.sleep(0.5)
+    
+    return Response(generate(), mimetype='text/event-stream')
+
+
+@app.route('/sync')
+def run_sync():
+    """Trigger sync with progress tracking"""
+    user = GoogleOAuth.get_current_user()
+    
+    if not user:
+        return jsonify({'error': 'Not authenticated'}), 401
+    
+    from sync_worker import SyncWorker
+    
+    def progress_callback(stage, current, total, message):
+        progress_tracker.update(stage, current, total, message)
+    
+    worker = SyncWorker(user)
+    results = worker.run_sync(progress_callback=progress_callback)
+    
+    # Store result for later retrieval
+    global last_sync_result
+    last_sync_result = results
+    
+    return jsonify(results)
+
+
+@app.route('/sync-result')
+def sync_result():
+    """Get the last sync result"""
+    return jsonify(last_sync_result)
 
 @app.route('/login')
 def login():
@@ -565,21 +1069,6 @@ def test_apis():
             'status': 'error',
             'message': str(e)
         }), 500
-
-@app.route('/sync')
-def run_sync():
-    """Manually trigger a sync"""
-    user = GoogleOAuth.get_current_user()
-    
-    if not user:
-        return redirect(url_for('login'))
-    
-    from sync_worker import SyncWorker
-    
-    worker = SyncWorker(user)
-    results = worker.run_sync()
-    
-    return jsonify(results)
 
 
 @app.route('/calendar-info')

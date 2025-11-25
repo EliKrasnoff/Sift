@@ -144,21 +144,45 @@ class SyncWorker:
                         event_ids = []
                         
                         # Add each event to calendar (with deduplication)
+                        # Add each event to calendar (with deduplication)
                         for event in events:
                             try:
+                                # Parse start datetime for database comparison
+                                try:
+                                    event_start_dt = datetime.fromisoformat(event['start_datetime'])
+                                except:
+                                    print(f"Could not parse datetime for event: {event['title']}")
+                                    continue
+                                
                                 # Create a unique key for this event
                                 event_key = (
                                     event['title'].lower().strip(),
                                     event['start_datetime']
                                 )
                                 
-                                # Skip if we've already added this exact event
+                                # Check if already added in THIS sync (in-memory cache)
                                 if event_key in added_events_cache:
-                                    print(f"Skipping duplicate event: {event['title']}")
+                                    print(f"Skipping duplicate event (this sync): {event['title']}")
                                     results['duplicates_skipped'] += 1
                                     continue
                                 
-                                gcal_event = self.event_extractor.format_for_google_calendar(event)
+                                # Check if event already exists in database (from previous syncs)
+                                existing_event = CalendarEvent.query.filter_by(
+                                    user_id=self.user.id,
+                                    event_title=event['title'],
+                                    start_datetime=event_start_dt
+                                ).first()
+                                
+                                if existing_event and not existing_event.user_deleted:
+                                    print(f"Skipping duplicate event (previous sync): {event['title']}")
+                                    results['duplicates_skipped'] += 1
+                                    continue
+                                
+                                gcal_event = self.event_extractor.format_for_google_calendar(
+                                    event, 
+                                    email_id=email['id'],
+                                    email_subject=email['subject']
+                                )
                                 
                                 # Skip if event formatting failed
                                 if not gcal_event:
@@ -171,6 +195,7 @@ class SyncWorker:
                                 from models import CalendarEvent
                                 cal_event = CalendarEvent(
                                     user_id=self.user.id,
+                                    processed_email_id=processed.id if processed else None,  # We'll set this after saving processed
                                     gcal_event_id=event_id,
                                     gcal_calendar_id=self.user.sift_calendar_id,
                                     event_title=event['title'],
