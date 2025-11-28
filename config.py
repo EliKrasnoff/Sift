@@ -3,9 +3,17 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+
+
 class Config:
     # Flask
-    SECRET_KEY = os.getenv('SECRET_KEY')
+    # Prefer SECRET_KEY, fall back to FLASK_SECRET_KEY, and in dev use a default.
+    SECRET_KEY = (
+        os.getenv('SECRET_KEY')
+        or os.getenv('FLASK_SECRET_KEY')
+        or 'dev-secret-key-change-me'  # change this to something random for local dev
+    )
+
     SQLALCHEMY_DATABASE_URI = os.getenv('DATABASE_URL', 'sqlite:///sift.db')
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     
@@ -26,3 +34,6 @@ class Config:
     AZURE_OPENAI_ENDPOINT = os.getenv('AZURE_OPENAI_ENDPOINT')
     AZURE_OPENAI_KEY = os.getenv('AZURE_OPENAI_KEY')
     AZURE_OPENAI_DEPLOYMENT = os.getenv('AZURE_OPENAI_DEPLOYMENT')
+
+
+    

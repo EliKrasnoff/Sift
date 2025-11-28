@@ -7,9 +7,9 @@ from models import db, User
 from datetime import datetime
 import os
 
-# Disable HTTPS requirement for local development
-os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
-
+# Allow HTTP for OAuth only in non-production environments
+if os.getenv("FLASK_ENV", "development") != "production":
+    os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
 
 class GoogleOAuth:
     """Handle Google OAuth 2.0 flow"""

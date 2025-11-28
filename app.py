@@ -4,11 +4,26 @@ from models import db, User, ProcessedEmail, CalendarEvent
 from auth import GoogleOAuth
 from datetime import datetime
 import json
-
+import os
 
 app = Flask(__name__)
 app.config.from_object(Config)
 
+# Make sure we actually have a secret key for sessions.
+env = os.getenv("FLASK_ENV", "development")
+
+if not app.config.get("SECRET_KEY"):
+    if env == "production":
+        # In production, fail hard if no real secret is configured
+        raise RuntimeError(
+            "SECRET_KEY is not set. Set SECRET_KEY or FLASK_SECRET_KEY in the environment."
+        )
+    else:
+        # Dev fallback (should not be used in real prod)
+        app.config["SECRET_KEY"] = "dev-secret-key-change-me"
+
+
+        
 # Initialize database
 db.init_app(app)
 
